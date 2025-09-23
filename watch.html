@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Watch — FlixKing</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#000000" />
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' x2='1' y1='0' y2='1'%3E%3Cstop stop-color='%23ff385c'/%3E%3Cstop stop-color='%23e50914' offset='1'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='256' height='256' rx='56' fill='%230b0b0b'/%3E%3Cpath d='M96 72l96 56-96 56z' fill='url(%23g)'/%3E%3C/svg%3E">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400..900&display=swap" rel="stylesheet">
+  <style>
+    :root{ --accent:#e50914; --accent2:#ff385c; --hud:#0b0b0b; --hud2:#141414 }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{ margin:0; background:#000; color:#fff; display:grid; grid-template-rows:auto 1fr; font-family:"Inter", ui-sans-serif, system-ui }
+
+    /* Top bar */
+    .top{
+      position:fixed; inset-inline:0; top:0; z-index:50; padding:10px 12px;
+      display:flex; align-items:center; gap:10px;
+      background:linear-gradient(180deg, rgba(0,0,0,.8), rgba(0,0,0,.3), transparent);
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,.05);
+    }
+    .btn{
+      display:inline-flex; align-items:center; gap:8px; cursor:pointer; font-weight:900; letter-spacing:.3px;
+      padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.08); transition:.2s;
+    }
+    .btn:hover{ background:rgba(255,255,255,.14) }
+    .title{ font-weight:900; letter-spacing:.5px; font-size:1rem; opacity:.95 }
+    .sp{ flex:1 }
+    .picker{ display:flex; align-items:center; gap:8px }
+    .pill{ padding:6px 10px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.12); font-weight:800 }
+    select{
+      padding:8px 12px; border-radius:8px; border:1px solid rgba(255,255,255,.12);
+      background:#111; color:#fff; outline:none; font-weight:700
+    }
+
+    /* Player stage */
+    .stage{ position:relative; display:grid; place-items:center; height:100vh }
+    iframe{ position:absolute; inset:0; width:100%; height:100%; border:0 }
+    .veil{ position:absolute; inset:0; display:grid; place-items:center; background:#000; transition:.4s }
+    .spinner{ width:44px; height:44px; border:4px solid rgba(255,255,255,.18); border-top-color:#fff; border-radius:50%; animation:spin 1s linear infinite }
+    @keyframes spin{ to{ transform:rotate(360deg) } }
+
+    /* HUD (top-right, click-through, auto-dim) */
+    .hud{
+      position:fixed; top:64px; right:12px; z-index:60;
+      display:flex; gap:8px; align-items:center; justify-content:space-between;
+      padding:8px 10px; border-radius:12px;
+      background:linear-gradient(180deg, var(--hud), var(--hud2));
+      border:1px solid rgba(255,255,255,.08); box-shadow:0 10px 30px rgba(0,0,0,.4);
+      width:auto; max-width:360px;
+      pointer-events:none; opacity:0.9; transition:opacity .25s ease;
+    }
+    .meta{ display:flex; align-items:center; gap:8px; font-weight:900 }
+    .progress{ height:6px; width:220px; flex:none; background:rgba(255,255,255,.15); border-radius:999px; overflow:hidden }
+    .progress > div{ height:100%; width:0; background:linear-gradient(90deg, #ff7043, var(--accent)) }
+
+    @media (max-width: 768px){ .hud{ display:none } .title{ display:none } .picker{ display:none } }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="btn" onclick="history.back()">⬅ Back</div>
+    <div class="title" id="title">Loading…</div>
+    <div class="sp"></div>
+    <div class="picker" id="picker" style="display:none">
+      <span class="pill">Season</span>
+      <select id="season"></select>
+      <span class="pill">Episode</span>
+      <select id="episode"></select>
+      <div class="btn" onclick="changeEpisode()">Load</div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="veil" id="veil"><div class="spinner"></div></div>
+    <iframe id="frame" allowfullscreen></iframe>
+  </div>
+
+  <div class="hud">
+    <div class="meta">
+      <span class="pill" id="typePill">MOVIE</span>
+      <span class="pill" id="yearPill">—</span>
+      <span class="pill" id="ratingPill">★ —</span>
+    </div>
+    <div class="progress"><div id="bar"></div></div>
+  </div>
+
+  <script>
+    // ===== Query params
+    const qp = new URLSearchParams(location.search);
+    const id = qp.get("id");
+    let type = qp.get("type")==="tv" ? "tv" : "movie";
+    let wantedSeason = parseInt(qp.get("season")||"");
+    let wantedEpisode = parseInt(qp.get("episode")||"");
+
+    // ===== Config
+    const API_KEY = "d9f0568167a608d0700093444b0c2da7"; // <- replace with your TMDB key
+    const frame = document.getElementById("frame");
+    const veil = document.getElementById("veil");
+    const bar = document.getElementById("bar");
+    const titleEl = document.getElementById("title");
+    const typePill = document.getElementById("typePill");
+    const yearPill = document.getElementById("yearPill");
+    const ratingPill = document.getElementById("ratingPill");
+    const picker = document.getElementById("picker");
+    const seasonSel = document.getElementById("season");
+    const episodeSel = document.getElementById("episode");
+
+    // ===== Continue Watching (localStorage)
+    const yearOf = d => (d||"").slice(0,4) || "—";
+    const key = (id,type)=> `${type}:${id}`;
+    const getMap = ()=> { try{return JSON.parse(localStorage.getItem("fk-continue")||"{}");}catch{return{}} };
+    const setMap = (m)=> localStorage.setItem("fk-continue", JSON.stringify(m));
+    const saveProgress = ({id,type,progress,currentTime,duration})=>{
+      const m = getMap(); m[key(id,type)] = {id,type,progress,currentTime,duration,ts:Date.now()}; setMap(m);
+    };
+    const clearProgress=(id,type)=>{ const m=getMap(); delete m[key(id,type)]; setMap(m); };
+
+    // ===== Embed helpers
+    function setSrcMovie(progressSec){
+      const base = `https://www.vidking.net/embed/movie/${id}?color=e50914&autoPlay=true`;
+      frame.src = progressSec ? `${base}&progress=${Math.floor(progressSec)}` : base;
+    }
+    function setSrcTv(season,episode,progressSec){
+      const base = `https://www.vidking.net/embed/tv/${id}/${season}/${episode}?color=e50914&autoPlay=true&nextEpisode=true&episodeSelector=true`;
+      frame.src = progressSec ? `${base}&progress=${Math.floor(progressSec)}` : base;
+    }
+    function changeEpisode(){
+      const s = parseInt(seasonSel.value||"1"), e = parseInt(episodeSel.value||"1");
+      setSrcTv(s,e);
+    }
+
+    // ===== TV helpers
+    async function populateEpisodes(tvId, seasonNumber){
+      const res = await fetch(`https://api.themoviedb.org/3/tv/${tvId}/season/${seasonNumber}?api_key=${API_KEY}`);
+      const data = await res.json();
+      const eps = (data.episodes||[]).filter(e=>e.episode_number>0);
+      episodeSel.innerHTML = "";
+      eps.forEach(ep=>{
+        const opt = document.createElement("option");
+        opt.value = ep.episode_number; opt.textContent = `E${ep.episode_number}`;
+        episodeSel.appendChild(opt);
+      });
+      seasonSel.value = seasonNumber;
+      episodeSel.value = eps.length ? eps[0].episode_number : "1";
+      return eps;
+    }
+
+    async function firstValidSeasonEpisode(tvId){
+      // returns {season, episode} guaranteed to exist
+      const tv = await fetch(`https://api.themoviedb.org/3/tv/${tvId}?api_key=${API_KEY}`).then(r=>r.json());
+      titleEl.textContent = tv.name || "TV Show";
+      typePill.textContent = "TV SERIES";
+      yearPill.textContent = yearOf(tv.first_air_date);
+      ratingPill.textContent = "★ " + ((Math.round((tv.vote_average||0)*10)/10)||"—");
+
+      // build seasons (skip season 0 unless it's the only one)
+      const seasons = (tv.seasons||[]).filter(s=>s.season_number>0);
+      const pool = seasons.length ? seasons : (tv.seasons||[]);
+      seasonSel.innerHTML = "";
+      pool.sort((a,b)=>a.season_number-b.season_number).forEach(s=>{
+        const opt = document.createElement("option");
+        opt.value = s.season_number; opt.textContent = `S${s.season_number}`;
+        seasonSel.appendChild(opt);
+      });
+      picker.style.display = "flex";
+
+      // explicit request via URL
+      if(Number.isInteger(wantedSeason) && Number.isInteger(wantedEpisode) && wantedSeason>0 && wantedEpisode>0){
+        await populateEpisodes(tvId, wantedSeason);
+        return { season: wantedSeason, episode: wantedEpisode };
+      }
+
+      // find first season with episodes
+      for(const s of pool){
+        const eps = await populateEpisodes(tvId, s.season_number);
+        if(eps.length){ return { season: s.season_number, episode: eps[0].episode_number }; }
+      }
+      // fallback
+      await populateEpisodes(tvId, 1);
+      return { season: 1, episode: 1 };
+    }
+
+    // ===== Boot
+    async function boot(){
+      try{
+        if(type==="tv"){
+          const { season, episode } = await firstValidSeasonEpisode(id);
+          setSrcTv(season, episode);
+        }else{
+          const mv = await fetch(`https://api.themoviedb.org/3/movie/${id}?api_key=${API_KEY}`).then(r=>r.json());
+          titleEl.textContent = mv.title || "Movie";
+          typePill.textContent = "MOVIE";
+          yearPill.textContent = yearOf(mv.release_date);
+          ratingPill.textContent = "★ " + ((Math.round((mv.vote_average||0)*10)/10)||"—");
+          setSrcMovie();
+        }
+      }catch(e){
+        titleEl.textContent = "Unable to load";
+      }
+    }
+
+    // ===== Vidking postMessage progress
+    window.addEventListener("message", (event)=>{
+      try{
+        const payload = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        if(!payload || payload.type!=="PLAYER_EVENT") return;
+        const d = payload.data || {};
+        if(["timeupdate","seeked","play"].includes(d.event)){
+          const pct = Math.min(100, Math.max(0, d.progress || (d.duration? (d.currentTime/d.duration*100):0)));
+          bar.style.width = pct + "%";
+          saveProgress({ id, type, progress:pct, currentTime:d.currentTime||0, duration:d.duration||0 });
+        }
+        if(d.event==="ended"){ bar.style.width="100%"; clearProgress(id,type); }
+      }catch{}
+    });
+
+    // ===== Hide veil when loaded
+    frame.addEventListener("load", ()=> setTimeout(()=> veil.style.opacity=0, 150));
+
+    // ===== HUD auto-dim (never blocks clicks because pointer-events:none)
+    (function autoDimHUD(){
+      const hud = document.querySelector('.hud'); if(!hud) return;
+      let t; const wake = () => { hud.style.opacity='0.9'; clearTimeout(t); t=setTimeout(()=> hud.style.opacity='0.18', 1000); };
+      document.addEventListener('mousemove', wake, {passive:true});
+      document.addEventListener('keydown', wake, {passive:true});
+      wake();
+    })();
+
+    boot();
+  </script>
+</body>
+</html>
